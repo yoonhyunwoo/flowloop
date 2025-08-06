@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowLoop - 데이터 흐름 애니메이션</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>FlowLoop</h1>
+        <div id="controls">
+            <button id="add-node">노드 추가</button>
+            <button id="set-path">경로 설정</button>
+            <button id="start-animation">애니메이션 시작</button>
+            <button id="stop-animation">애니메이션 중지</button>
+            <label for="upload-image" class="custom-file-upload">배경 이미지 업로드</label>
+            <input type="file" id="upload-image" accept="image/*">
+            <button id="save-gif">GIF로 저장</button>
+        </div>
+    </header>
+    <div class="content-area">
+        <aside class="sidebar">
+            <h2>점 스타일 설정</h2>
+            <div class="setting-item">
+                <label for="fill-color-control">채우기 색상</label>
+                <input type="color" id="fill-color-control" value="#00ff00">
+            </div>
+            <div class="setting-item">
+                <label for="stroke-color-control">테두리 색상</label>
+                <input type="color" id="stroke-color-control" value="#000000">
+            </div>
+            <div class="setting-item">
+                <label for="size-control">크기</label>
+                <div class="control-group">
+                    <input type="range" id="size-control" min="2" max="20" value="8" step="1">
+                    <span id="size-value">8</span>
+                </div>
+            </div>
+            <div class="setting-item-row">
+                <label for="glow-effect">형광 효과</label>
+                <input type="checkbox" id="glow-effect">
+            </div>
+            <div class="setting-item-row">
+                <label for="shadow-effect">그림자 효과</label>
+                <input type="checkbox" id="shadow-effect">
+            </div>
+        </aside>
+        <main>
+            <canvas id="canvas" width="800" height="600"></canvas>
+        </main>
+        <aside class="sidebar settings-sidebar">
+            <h2>애니메이션 설정</h2>
+            <div class="setting-item">
+                <label for="duration-control">총 애니메이션 시간 (초)</label>
+                <div class="control-group">
+                    <input type="range" id="duration-control" min="1" max="10" value="3" step="0.5">
+                    <span id="duration-value">3.0초</span>
+                </div>
+            </div>
+            <div class="setting-item-row">
+                <label for="multi-dot-effect">다중 점 사용</label>
+                <input type="checkbox" id="multi-dot-effect">
+            </div>
+            <div id="multi-dot-interval-container" class="setting-item hidden">
+                <label for="multi-dot-interval">점 생성 간격 (ms)</label>
+                <div class="control-group">
+                    <input type="range" id="multi-dot-interval" min="50" max="1000" value="200" step="10">
+                    <span id="multi-dot-interval-value">200ms</span>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <div id="loading-overlay" class="hidden">
+        <div class="spinner"></div>
+        <p>GIF 생성 중...</p>
+    </div>
+
+    <script src="gif.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
