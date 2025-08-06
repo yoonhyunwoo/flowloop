@@ -10,6 +10,7 @@
     <header>
         <h1>FlowLoop</h1>
         <div id="controls">
+            <button id="select-mode" class="active">선택</button>
             <button id="add-node">노드 추가</button>
             <button id="set-path">경로 설정</button>
             <button id="start-animation">애니메이션 시작</button>
@@ -68,6 +69,23 @@
                     <input type="range" id="multi-dot-interval" min="50" max="1000" value="200" step="10">
                     <span id="multi-dot-interval-value">200ms</span>
                 </div>
+            </div>
+
+            <h2>그리드 설정</h2>
+            <div class="setting-item">
+                <label for="grid-size-control">그리드 크기</label>
+                <div class="control-group">
+                    <input type="range" id="grid-size-control" min="10" max="50" value="20" step="5">
+                    <span id="grid-size-value">20px</span>
+                </div>
+            </div>
+            <div class="setting-item-row">
+                <label for="show-grid-checkbox">그리드 표시</label>
+                <input type="checkbox" id="show-grid-checkbox">
+            </div>
+            <div class="setting-item-row">
+                <label for="snap-to-grid-checkbox">그리드에 스냅</label>
+                <input type="checkbox" id="snap-to-grid-checkbox">
             </div>
         </aside>
     </div>

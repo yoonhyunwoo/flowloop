@@ -2,39 +2,63 @@
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
+// 마우스 위치를 추적하는 변수 추가
+let lastMousePosition = { x: 0, y: 0 };
+
+const gridSizeControl = document.getElementById('grid-size-control');
+const gridSizeValue = document.getElementById('grid-size-value');
+const showGridCheckbox = document.getElementById('show-grid-checkbox');
+const snapToGridCheckbox = document.getElementById('snap-to-grid-checkbox');
+
+
+
+// 그리드 관련 이벤트 리스너
+if (gridSizeControl) {
+    gridSizeControl.addEventListener('input', (e) => {
+        state.gridSize = parseInt(e.target.value);
+        gridSizeValue.textContent = `${e.target.value}px`;
+        draw();
+    });
+}
+
+if (showGridCheckbox) {
+    showGridCheckbox.addEventListener('change', (e) => {
+        state.showGrid = e.target.checked;
+        draw();
+    });
+}
+
+if (snapToGridCheckbox) {
+    snapToGridCheckbox.addEventListener('change', (e) => {
+        state.snapToGrid = e.target.checked;
+    });
+}
+
 // 애플리케이션 상태
 const state = {
     nodes: [],
     path: [],
     history: [],
-    isAddingNode: false,
-    isSettingPath: false,
+    currentMode: 'select',
     backgroundImage: null,
     isAnimating: false,
     animationFrameId: null,
-    animationStyle: {
-        fillColor: '#00ff00',
-        strokeColor: '#000000',
-        size: 8,
-        glow: false,
-        shadow: false,
-    },
-    animationSettings: {
-        duration: 3,
-        multiDot: {
-            enabled: false,
-            interval: 200, // ms
-            dots: [], // { progress: number }
-            lastSpawnTime: 0,
-        }
-    },
+    animationStyle: { fillColor: '#00ff00', strokeColor: '#000000', size: 8, glow: false, shadow: false },
+    animationSettings: { duration: 3, multiDot: { enabled: false, interval: 200, dots: [], lastSpawnTime: 0 } },
     camera: { x: 0, y: 0, zoom: 1 },
     isPanning: false,
     lastPanPosition: { x: 0, y: 0 },
     spacebarPressed: false,
+    draggedNode: null,
+    dragOffset: { x: 0, y: 0 },
+    // 그리드 관련 속성 추가
+    gridSize: 20,
+    snapToGrid: false,
+    showGrid: false
 };
 
 // --- DOM 요소 ---
+const selectModeButton = document.getElementById('select-mode');
 const addNodeButton = document.getElementById('add-node');
 const setPathButton = document.getElementById('set-path');
 const startAnimationButton = document.getElementById('start-animation');
@@ -57,29 +81,32 @@ const multiDotIntervalContainer = document.getElementById('multi-dot-interval-co
 const multiDotIntervalControl = document.getElementById('multi-dot-interval');
 const multiDotIntervalValue = document.getElementById('multi-dot-interval-value');
 
+// --- 모드 전환 ---
+function setMode(mode) {
+    state.currentMode = mode;
+    // 모든 버튼에서 active 클래스 제거
+    selectModeButton.classList.remove('active');
+    addNodeButton.classList.remove('active');
+    setPathButton.classList.remove('active');
+    // 현재 모드 버튼에 active 클래스 추가
+    if (mode === 'select') selectModeButton.classList.add('active');
+    else if (mode === 'addNode') addNodeButton.classList.add('active');
+    else if (mode === 'setPath') setPathButton.classList.add('active');
+    
+    // 모드 변경 후 커서 업데이트
+    updateCursor();
+}
 
 // --- 이벤트 리스너 ---
-
-addNodeButton.addEventListener('click', () => {
-    stopAnimation();
-    state.isAddingNode = true;
-    state.isSettingPath = false;
-    canvas.style.cursor = 'crosshair';
-});
-
+selectModeButton.addEventListener('click', () => setMode('select'));
+addNodeButton.addEventListener('click', () => setMode('addNode'));
 setPathButton.addEventListener('click', () => {
-    stopAnimation();
-    state.isAddingNode = false;
-    state.isSettingPath = true;
-    state.path = [];
-    canvas.style.cursor = 'pointer';
+    setMode('setPath');
+    state.path = []; // 경로 설정 모드 시작 시 경로 초기화
 });
 
 startAnimationButton.addEventListener('click', () => {
-    if (state.path.length < 2) {
-        alert("경로를 먼저 설정해주세요.");
-        return;
-    }
+    if (state.path.length < 2) { alert("경로를 먼저 설정해주세요."); return; }
     startAnimation();
 });
 
@@ -105,17 +132,33 @@ uploadImageInput.addEventListener('change', (event) => {
     }
 });
 
-// --- 캔버스 이벤트 (패닝 및 줌) ---
+// --- 캔버스 이벤트 ---
 
 canvas.addEventListener('mousedown', (e) => {
+    const worldPos = getTransformedPoint(e.clientX, e.clientY);
+
     if (e.button === 1 || (e.button === 0 && state.spacebarPressed)) {
         state.isPanning = true;
         state.lastPanPosition = { x: e.clientX, y: e.clientY };
         canvas.style.cursor = 'grabbing';
+        return;
+    }
+
+    if (e.button !== 0) return;
+
+    if (state.currentMode === 'select') {
+        const clickedNode = getNodeAt(worldPos.x, worldPos.y);
+        if (clickedNode) {
+            state.draggedNode = clickedNode;
+            state.dragOffset = { x: worldPos.x - clickedNode.x, y: worldPos.y - clickedNode.y };
+            saveState(); // 드래그 시작 전 상태 저장
+        }
     }
 });
 
 canvas.addEventListener('mousemove', (e) => {
+    lastMousePosition = { x: e.clientX, y: e.clientY };
+    
     if (state.isPanning) {
         const dx = e.clientX - state.lastPanPosition.x;
         const dy = e.clientY - state.lastPanPosition.y;
@@ -123,11 +166,20 @@ canvas.addEventListener('mousemove', (e) => {
         state.camera.y += dy;
         state.lastPanPosition = { x: e.clientX, y: e.clientY };
         draw();
+    } else if (state.draggedNode) {
+        const worldPos = getTransformedPoint(e.clientX, e.clientY);
+        // 드래그 시에도 그리드에 스냅 적용
+        state.draggedNode.x = snapToGrid(worldPos.x - state.dragOffset.x);
+        state.draggedNode.y = snapToGrid(worldPos.y - state.dragOffset.y);
+        draw();
+    } else {
+        updateCursor();
     }
 });
 
 canvas.addEventListener('mouseup', () => {
     state.isPanning = false;
+    state.draggedNode = null;
     updateCursor();
 });
 
@@ -148,84 +200,174 @@ canvas.addEventListener('wheel', (e) => {
 canvas.addEventListener('click', (event) => {
     if (state.spacebarPressed || event.button !== 0) return;
     const worldPos = getTransformedPoint(event.clientX, event.clientY);
-    if (state.isAddingNode) {
+    if (state.currentMode === 'addNode') {
         addNode(worldPos.x, worldPos.y);
-    } else if (state.isSettingPath) {
+    } else if (state.currentMode === 'setPath') {
         const clickedNode = getNodeAt(worldPos.x, worldPos.y);
         if (clickedNode) addNodeToPath(clickedNode);
     }
 });
 
+// --- 추가: 캔버스에서 마우스가 나갔을 때 처리 ---
+canvas.addEventListener('mouseleave', () => {
+    // 드래그나 패닝 중이 아닐 때만 기본 커서로 변경
+    if (!state.isPanning && !state.draggedNode) {
+        canvas.style.cursor = 'default';
+    }
+});
+
+// --- 추가: 캔버스에 마우스가 들어왔을 때 처리 ---
+canvas.addEventListener('mouseenter', (e) => {
+    lastMousePosition = { x: e.clientX, y: e.clientY };
+    updateCursor();
+});
+
+function drawGrid() {
+    if (!state.showGrid) return;
+    
+    ctx.save();
+    ctx.globalAlpha = 0.2;
+    ctx.strokeStyle = '#ccc';
+    ctx.lineWidth = 1 / state.camera.zoom;
+    
+    // 현재 뷰포트 내의 그리드 선 계산
+    const startX = Math.floor((-state.camera.x / state.camera.zoom) / state.gridSize) * state.gridSize;
+    const endX = Math.ceil(((canvas.width - state.camera.x) / state.camera.zoom) / state.gridSize) * state.gridSize;
+    const startY = Math.floor((-state.camera.y / state.camera.zoom) / state.gridSize) * state.gridSize;
+    const endY = Math.ceil(((canvas.height - state.camera.y) / state.camera.zoom) / state.gridSize) * state.gridSize;
+    
+    // 수직선 그리기
+    for (let x = startX; x <= endX; x += state.gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(x, startY);
+        ctx.lineTo(x, endY);
+        ctx.stroke();
+    }
+    
+    // 수평선 그리기
+    for (let y = startY; y <= endY; y += state.gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(startX, y);
+        ctx.lineTo(endX, y);
+        ctx.stroke();
+    }
+    
+    ctx.restore();
+}
+
+
 // --- 키보드 이벤트 ---
 
 document.addEventListener('keydown', (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === 'z') {
-        event.preventDefault();
-        undo();
+    if ((event.ctrlKey || event.metaKey) && event.key === 'z') { 
+        event.preventDefault(); 
+        undo(); 
     }
-    if (event.code === 'Space' && !state.spacebarPressed) {
-        event.preventDefault();
-        state.spacebarPressed = true;
-        updateCursor();
+    if (event.code === 'Space' && !state.spacebarPressed) { 
+        event.preventDefault(); 
+        state.spacebarPressed = true; 
+        updateCursor(); 
     }
 });
 
 document.addEventListener('keyup', (event) => {
-    if (event.code === 'Space') {
-        state.spacebarPressed = false;
-        updateCursor();
+    if (event.code === 'Space') { 
+        state.spacebarPressed = false; 
+        updateCursor(); 
     }
 });
 
 // --- UI 업데이트 함수 ---
 
 function updateCursor() {
-    if (state.isPanning) canvas.style.cursor = 'grabbing';
-    else if (state.spacebarPressed) canvas.style.cursor = 'grab';
-    else if (state.isAddingNode) canvas.style.cursor = 'crosshair';
-    else canvas.style.cursor = 'default';
+    // 패닝 중일 때
+    if (state.isPanning) {
+        canvas.style.cursor = 'grabbing';
+        return;
+    }
+    
+    // 스페이스바가 눌려있을 때
+    if (state.spacebarPressed) {
+        canvas.style.cursor = 'grab';
+        return;
+    }
+
+    // 드래그 중일 때
+    if (state.draggedNode) {
+        canvas.style.cursor = 'grabbing';
+        return;
+    }
+
+    // 모드별 커서 설정
+    if (state.currentMode === 'addNode') {
+        canvas.style.cursor = 'crosshair';
+        return;
+    }
+    
+    if (state.currentMode === 'select' || state.currentMode === 'setPath') {
+        // 마우스 위치에서 노드 검사
+        const rect = canvas.getBoundingClientRect();
+        const worldPos = getTransformedPoint(lastMousePosition.x, lastMousePosition.y);
+        const hoveredNode = getNodeAt(worldPos.x, worldPos.y);
+        
+        canvas.style.cursor = hoveredNode ? 'pointer' : 'default';
+        return;
+    }
+    
+    // 기본 커서
+    canvas.style.cursor = 'default';
 }
 
 // --- 컨트롤러 이벤트 리스너 ---
 
-durationControl.addEventListener('input', (e) => {
-    state.animationSettings.duration = parseFloat(e.target.value);
-    durationValue.textContent = `${state.animationSettings.duration.toFixed(1)}초`;
+// 스타일 컨트롤
+fillColorControl.addEventListener('input', (e) => {
+    state.animationStyle.fillColor = e.target.value;
 });
 
-fillColorControl.addEventListener('input', (e) => { state.animationStyle.fillColor = e.target.value; if(state.isAnimating) draw(); });
-strokeColorControl.addEventListener('input', (e) => { state.animationStyle.strokeColor = e.target.value; if(state.isAnimating) draw(); });
-sizeControl.addEventListener('input', (e) => { state.animationStyle.size = parseInt(e.target.value, 10); sizeValue.textContent = state.animationStyle.size; if(state.isAnimating) draw(); });
+strokeColorControl.addEventListener('input', (e) => {
+    state.animationStyle.strokeColor = e.target.value;
+});
+
+sizeControl.addEventListener('input', (e) => {
+    state.animationStyle.size = parseInt(e.target.value);
+    sizeValue.textContent = e.target.value;
+});
 
 glowEffectCheckbox.addEventListener('change', (e) => {
     state.animationStyle.glow = e.target.checked;
-    if (state.animationStyle.glow && state.animationStyle.shadow) {
+    if (e.target.checked) {
         shadowEffectCheckbox.checked = false;
         state.animationStyle.shadow = false;
     }
-    draw();
 });
 
 shadowEffectCheckbox.addEventListener('change', (e) => {
     state.animationStyle.shadow = e.target.checked;
-    if (state.animationStyle.shadow && state.animationStyle.glow) {
+    if (e.target.checked) {
         glowEffectCheckbox.checked = false;
         state.animationStyle.glow = false;
     }
-    draw();
+});
+
+// 애니메이션 설정 컨트롤
+durationControl.addEventListener('input', (e) => {
+    state.animationSettings.duration = parseFloat(e.target.value);
+    durationValue.textContent = `${e.target.value}초`;
 });
 
 multiDotCheckbox.addEventListener('change', (e) => {
     state.animationSettings.multiDot.enabled = e.target.checked;
-    multiDotIntervalContainer.classList.toggle('hidden', !e.target.checked);
-    // 애니메이션 모드를 변경하면, 현재 애니메이션 상태를 초기화
-    stopAnimation();
-    startAnimation();
+    if (e.target.checked) {
+        multiDotIntervalContainer.classList.remove('hidden');
+    } else {
+        multiDotIntervalContainer.classList.add('hidden');
+    }
 });
 
 multiDotIntervalControl.addEventListener('input', (e) => {
-    state.animationSettings.multiDot.interval = parseInt(e.target.value, 10);
-    multiDotIntervalValue.textContent = `${state.animationSettings.multiDot.interval}ms`;
+    state.animationSettings.multiDot.interval = parseInt(e.target.value);
+    multiDotIntervalValue.textContent = `${e.target.value}ms`;
 });
 
 // --- 핵심 기능 함수 ---
@@ -252,7 +394,9 @@ function undo() {
 
 function addNode(x, y) {
     saveState();
-    const newNode = { id: state.nodes.length + 1, x, y, radius: 15 };
+    const snappedX = snapToGrid(x);
+    const snappedY = snapToGrid(y);
+    const newNode = { id: state.nodes.length + 1, x: snappedX, y: snappedY, radius: 15 };
     state.nodes.push(newNode);
     draw();
 }
@@ -262,6 +406,7 @@ function addNodeToPath(node) {
 }
 
 function getNodeAt(x, y) {
+    // 드래그 편의를 위해 노드를 역순으로 탐색 (위에 있는 노드 먼저 선택)
     for (let i = state.nodes.length - 1; i >= 0; i--) {
         const node = state.nodes[i];
         const distance = Math.sqrt((node.x - x) ** 2 + (node.y - y) ** 2);
@@ -270,11 +415,15 @@ function getNodeAt(x, y) {
     return null;
 }
 
+function snapToGrid(value) {
+    if (!state.snapToGrid) return value;
+    return Math.round(value / state.gridSize) * state.gridSize;
+}
+
 let lastTimestamp = 0;
 function startAnimation() {
     if (state.isAnimating) return;
     state.isAnimating = true;
-    // 애니메이션 시작 시 점 배열 초기화
     state.animationSettings.multiDot.dots = state.animationSettings.multiDot.enabled ? [] : [{ progress: 0 }];
     state.animationSettings.multiDot.lastSpawnTime = 0;
     lastTimestamp = 0;
@@ -289,7 +438,7 @@ function stopAnimation() {
 }
 
 function animate(timestamp) {
-    if (!state.isAnimating) return; // 중지되었으면 바로 종료
+    if (!state.isAnimating) return;
     if (!lastTimestamp) lastTimestamp = timestamp;
     const deltaTime = timestamp - lastTimestamp;
     lastTimestamp = timestamp;
@@ -297,20 +446,15 @@ function animate(timestamp) {
     const progressIncrement = deltaTime / (settings.duration * 1000);
 
     if (settings.multiDot.enabled) {
-        // 새로운 점 생성
         settings.multiDot.lastSpawnTime += deltaTime;
         if (settings.multiDot.lastSpawnTime > settings.multiDot.interval) {
             settings.multiDot.dots.push({ progress: 0 });
             settings.multiDot.lastSpawnTime = 0;
         }
-        // 모든 점 업데이트 및 제거
         settings.multiDot.dots.forEach(dot => dot.progress += progressIncrement);
         settings.multiDot.dots = settings.multiDot.dots.filter(dot => dot.progress <= 1);
     } else {
-        // 단일 점 업데이트
-        if (settings.multiDot.dots.length === 0) {
-             settings.multiDot.dots.push({ progress: 0 });
-        }
+        if (settings.multiDot.dots.length === 0) settings.multiDot.dots.push({ progress: 0 });
         let currentProgress = settings.multiDot.dots[0].progress;
         currentProgress = (currentProgress + progressIncrement) % 1;
         settings.multiDot.dots[0].progress = currentProgress;
@@ -327,8 +471,11 @@ function draw() {
     ctx.scale(state.camera.zoom, state.camera.zoom);
 
     if (state.backgroundImage) ctx.drawImage(state.backgroundImage, 0, 0, canvas.width, canvas.height);
+    
+    drawGrid(); // 그리드 그리기 추가
     drawPath();
     drawNodes();
+    
     if (state.isAnimating) {
         state.animationSettings.multiDot.dots.forEach(dot => {
             drawAnimatedCircle(dot.progress);
@@ -340,14 +487,26 @@ function draw() {
 
 function drawNodes() {
     state.nodes.forEach(node => {
+        ctx.save();
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
+        ctx.shadowBlur = 5 / state.camera.zoom;
+        ctx.shadowOffsetX = 2 / state.camera.zoom;
+        ctx.shadowOffsetY = 2 / state.camera.zoom;
         ctx.beginPath();
         ctx.arc(node.x, node.y, node.radius, 0, 2 * Math.PI);
-        ctx.fillStyle = 'rgba(255, 0, 0, 0.7)';
+        const gradient = ctx.createRadialGradient(node.x - node.radius/3, node.y - node.radius/3, 0, node.x, node.y, node.radius);
+        gradient.addColorStop(0, 'rgba(69, 170, 242, 1)');
+        gradient.addColorStop(1, 'rgba(41, 128, 185, 1)');
+        ctx.fillStyle = gradient;
         ctx.fill();
-        ctx.strokeStyle = '#000';
+        ctx.restore();
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, node.radius, 0, 2 * Math.PI);
+        ctx.strokeStyle = '#1e6b9a';
+        ctx.lineWidth = 2 / state.camera.zoom;
         ctx.stroke();
         ctx.fillStyle = '#fff';
-        ctx.font = '12px Arial';
+        ctx.font = `${12 / state.camera.zoom}px Arial`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(node.id, node.x, node.y);
@@ -359,8 +518,10 @@ function drawPath() {
     ctx.beginPath();
     ctx.moveTo(state.path[0].x, state.path[0].y);
     for (let i = 1; i < state.path.length; i++) ctx.lineTo(state.path[i].x, state.path[i].y);
-    ctx.strokeStyle = 'blue';
-    ctx.lineWidth = 3 / state.camera.zoom;
+    ctx.strokeStyle = '#34495e';
+    ctx.lineWidth = 5 / state.camera.zoom;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     ctx.stroke();
 }
 
@@ -417,10 +578,7 @@ function getPathLength() {
 }
 
 function generateGif() {
-    if (state.path.length < 2) {
-        alert("GIF를 만들려면 먼저 경로를 설정해야 합니다.");
-        return;
-    }
+    if (state.path.length < 2) { alert("GIF를 만들려면 먼저 경로를 설정해야 합니다."); return; }
     stopAnimation();
     saveGifButton.disabled = true;
     loadingOverlay.classList.remove('hidden');
@@ -472,6 +630,7 @@ function generateGif() {
 }
 
 function init() {
+    setMode('select');
     draw();
     saveState();
 }

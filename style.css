@@ -42,6 +42,12 @@ button:hover, .custom-file-upload:hover {
     background-color: #e0e0e0;
 }
 
+button.active {
+    background-color: #cce5ff; /* 활성화된 버튼 배경색 */
+    color: #004085;
+    border-color: #b8daff;
+}
+
 input[type="file"] {
     display: none;
 }
