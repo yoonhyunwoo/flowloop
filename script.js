@@ -54,7 +54,8 @@ const state = {
     // 그리드 관련 속성 추가
     gridSize: 20,
     snapToGrid: false,
-    showGrid: false
+    showGrid: false,
+    hoveredNode: null,
 };
 
 // --- DOM 요소 ---
@@ -102,7 +103,8 @@ selectModeButton.addEventListener('click', () => setMode('select'));
 addNodeButton.addEventListener('click', () => setMode('addNode'));
 setPathButton.addEventListener('click', () => {
     setMode('setPath');
-    state.path = []; // 경로 설정 모드 시작 시 경로 초기화
+    state.path = [];
+    draw();
 });
 
 startAnimationButton.addEventListener('click', () => {
@@ -158,7 +160,15 @@ canvas.addEventListener('mousedown', (e) => {
 
 canvas.addEventListener('mousemove', (e) => {
     lastMousePosition = { x: e.clientX, y: e.clientY };
+    const worldPos = getTransformedPoint(e.clientX, e.clientY);
     
+    // Check for hovered node and update the state
+    if (state.currentMode === 'select' || state.currentMode === 'setPath') {
+        state.hoveredNode = getNodeAt(worldPos.x, worldPos.y);
+        draw(); // Redraw to show the highlight
+    } else {
+        state.hoveredNode = null;
+    }    
     if (state.isPanning) {
         const dx = e.clientX - state.lastPanPosition.x;
         const dy = e.clientY - state.lastPanPosition.y;
@@ -476,6 +486,23 @@ function draw() {
     drawPath();
     drawNodes();
     
+    if (state.currentMode === 'setPath' && state.path.length > 0) {
+        const rect = canvas.getBoundingClientRect();
+        // Get the current mouse position in world coordinates
+        const mouseWorldPos = getTransformedPoint(lastMousePosition.x, lastMousePosition.y);
+        
+        const lastNode = state.path[state.path.length - 1];
+        
+        ctx.beginPath();
+        ctx.moveTo(lastNode.x, lastNode.y);
+        ctx.lineTo(mouseWorldPos.x, mouseWorldPos.y);
+        ctx.strokeStyle = '#007bff'; // A distinct color for the temporary line
+        ctx.lineWidth = 2 / state.camera.zoom;
+        ctx.setLineDash([5 / state.camera.zoom, 5 / state.camera.zoom]); // Dashed line for a temporary feel
+        ctx.stroke();
+        ctx.setLineDash([]); // Reset line dash to prevent it from affecting other drawings
+    }
+
     if (state.isAnimating) {
         state.animationSettings.multiDot.dots.forEach(dot => {
             drawAnimatedCircle(dot.progress);
@@ -510,6 +537,13 @@ function drawNodes() {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(node.id, node.x, node.y);
+        if (state.hoveredNode && state.hoveredNode.id === node.id) {
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, node.radius + 3, 0, 2 * Math.PI); // Draw a larger circle as the highlight
+            ctx.strokeStyle = '#ff9800'; // A bright, contrasting color for the highlight
+            ctx.lineWidth = 3 / state.camera.zoom;
+            ctx.stroke();
+        }
     });
 }
 
